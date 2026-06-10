@@ -337,8 +337,8 @@ app.post("/api/recognize", async (req, res) => {
 
     let textOutput = "";
     let lastError: any = null;
-    const modelsToTry = ["gemini-3.5-flash", "gemini-flash-latest"];
-
+    const modelsToTry = ["gemini-2.0-flash", "gemini-1.5-flash"];
+    
     for (const modelName of modelsToTry) {
       for (let attempt = 1; attempt <= 3; attempt++) {
         try {
