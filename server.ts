@@ -289,22 +289,7 @@ app.post("/api/recognize", async (req, res) => {
         console.warn("Python backend unreachable, falling back to Gemini:", pythonErr.message);
       }
     }
-    app.get("/api/sample/:digit", async (req, res) => {
-  try {
-    const pythonBackend = process.env.PYTHON_BACKEND_URL;
-    if (!pythonBackend) {
-      return res.status(503).json({ error: "Python backend not configured" });
-    }
-    const response = await fetch(`${pythonBackend}/api/sample/${req.params.digit}`, {
-      signal: AbortSignal.timeout(30000)
-    });
-    const data = await response.json();
-    res.json(data);
-  } catch (err: any) {
-    console.error("Sample proxy error:", err.message);
-    res.status(500).json({ error: "Sample prediction failed" });
-  }
-});
+    
 
     // ✅ FALLBACK: GEMINI AI RECOGNITION
     const ai = getGeminiClient();
@@ -399,6 +384,22 @@ app.post("/api/recognize", async (req, res) => {
   } catch (error: any) {
     console.error("Recognition error:", error);
     return res.json(getLocalFallbackPrediction(error.message));
+  }
+});
+app.get("/api/sample/:digit", async (req, res) => {
+  try {
+    const pythonBackend = process.env.PYTHON_BACKEND_URL;
+    if (!pythonBackend) {
+      return res.status(503).json({ error: "Python backend not configured" });
+    }
+    const response = await fetch(`${pythonBackend}/api/sample/${req.params.digit}`, {
+      signal: AbortSignal.timeout(30000)
+    });
+    const data = await response.json();
+    res.json(data);
+  } catch (err: any) {
+    console.error("Sample proxy error:", err.message);
+    res.status(500).json({ error: "Sample prediction failed" });
   }
 });
 
