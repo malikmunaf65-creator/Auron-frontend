@@ -123,14 +123,19 @@ export default function UploadView({ onNavigate, onAddHistory, userProfile, appL
           const base64Data = reader.result as string;
           const base64Payload = base64Data.split(",")[1];
 
-          const response = await fetch("/api/recognize", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              audio: base64Payload,
-              mimeType: selectedFile.type || "audio/wav",
-            }),
-          });
+         const controller = new AbortController();
+const timeout = setTimeout(() => controller.abort(), 45000);
+
+const response = await fetch("/api/recognize", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    audio: base64Payload,
+    mimeType: selectedFile.type || "audio/wav",
+  }),
+  signal: controller.signal,
+});
+clearTimeout(timeout);
 
           if (!response.ok) {
             throw new Error("Auron prediction network response was invalid.");
