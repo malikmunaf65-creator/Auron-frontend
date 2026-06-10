@@ -156,16 +156,9 @@ export default function UploadView({ onNavigate, onAddHistory, userProfile, appL
           };
 
           playSuccessSfx();
-          if (!userProfile) {
-            try {
-              localStorage.setItem("auron_guest_uploads_done", "true");
-              localStorage.setItem("auron_pending_upload_record", JSON.stringify(newRecord));
-            } catch (v) {}
-            setShowReadyModal(true);
-          } else {
-            onAddHistory(newRecord);
-            onNavigate("results");
-          }
+          // Always show results regardless of login status
+onAddHistory(newRecord);
+onNavigate("results");
         } catch (err: any) {
           console.error("Ingestion recognition mistake:", err);
           setErrorText("AI analysis failed. Check your API configurations.");
