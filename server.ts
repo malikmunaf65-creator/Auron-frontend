@@ -277,7 +277,7 @@ if (ai) {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ audio, mimeType }),
-          signal: AbortSignal.timeout(60000), // 60 second timeout
+          signal: AbortSignal.timeout(110000), //  second timeout
         });
         
 
