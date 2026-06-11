@@ -159,12 +159,10 @@ clearTimeout(timeout);
             isMock: !!data.isMock
           };
 
-          playSuccessSfx();
-          // Always show results regardless of login status
-setIsUploading(false);
+         playSuccessSfx();
 onAddHistory(newRecord);
 onNavigate("results");
-      } catch (err: any) {
+} catch (err: any) {
   console.error("Ingestion recognition mistake:", err);
   if (err.name === 'AbortError') {
     setErrorText("Request timed out — try a shorter audio file.");
@@ -172,7 +170,6 @@ onNavigate("results");
     setErrorText(`Analysis failed: ${err.message}`);
   }
   playErrorSfx();
-} finally {
   setIsUploading(false);
 }
     } catch (err: any) {
