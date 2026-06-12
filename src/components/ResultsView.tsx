@@ -20,15 +20,15 @@ export default function ResultsView({ history, onClearHistory, voiceSettings, ap
 
   const activeItem = selectedItem || (history.length > 0 ? history[0] : null);
 
-  const lastVocalizedIdRef = useRef<string | null>(null);
+  // Track which item we already auto-played so we never fire twice
+  const lastAutoPlayedIdRef = useRef<string | null>(null);
 
   const speakActiveDigit = async (voiceId: string) => {
     if (!activeItem) return;
     playClickSfx();
     const speechText = `${activeItem.digit}, ${getTranslatedPhonetic(activeItem.digit)}`;
     const mode = voiceSettings?.engineMode || "offline";
-    
-    // Distinct speed values for diverse voice experiences
+
     let rate = 1.0;
     if (voiceId === "Aetheria") rate = 0.90;
     else if (voiceId === "Valkyrie_XT") rate = 1.15;
@@ -45,12 +45,11 @@ export default function ResultsView({ history, onClearHistory, voiceSettings, ap
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ text: speechText, voice: voiceId }),
         });
-
         if (!res.ok) throw new Error("TTS Failure");
         const json = await res.json();
         const audioSrc = `data:audio/wav;base64,${json.audio}`;
         const audio = new Audio(audioSrc);
-        audio.playbackRate = isAlt ? (rate * 1.25) : rate;
+        audio.playbackRate = isAlt ? rate * 1.25 : rate;
         await audio.play();
       } catch (err) {
         console.warn("Server TTS failed, falling back to local speech engine.");
@@ -61,9 +60,7 @@ export default function ResultsView({ history, onClearHistory, voiceSettings, ap
     } else {
       setSynthesizingVoice(voiceId);
       speakTextOffline(speechText, voiceId);
-      setTimeout(() => {
-        setSynthesizingVoice(null);
-      }, 1200);
+      setTimeout(() => setSynthesizingVoice(null), 1200);
     }
   };
 
@@ -71,44 +68,57 @@ export default function ResultsView({ history, onClearHistory, voiceSettings, ap
     if (!item.audioData) return;
     if (!quiet) playClickSfx();
     setPlayingId(item.id);
-
     const audio = new Audio(item.audioData);
     audio.play().catch(() => {});
-    audio.onended = () => {
-      setPlayingId(null);
-    };
+    audio.onended = () => setPlayingId(null);
   };
 
+  // ─── AUTO-PLAY on new activeItem ──────────────────────────────────────────
+  // Rules:
+  //   • Only fire once per unique item id (ref guard)
+  //   • LIVE mic recordings → play saved audio (it came from mic, no prior playback)
+  //   • Upload items      → play saved audio (user wants to hear what they uploaded)
+  //   • Demo items        → do NOT speak — DemoView already called speakTextOffline
+  //     before navigating here, so we stay silent to avoid the double-speak bug.
   useEffect(() => {
-    if (activeItem && activeItem.id !== lastVocalizedIdRef.current) {
-      lastVocalizedIdRef.current = activeItem.id;
+    if (!activeItem) return;
+    if (activeItem.id === lastAutoPlayedIdRef.current) return; // already handled
+
+    lastAutoPlayedIdRef.current = activeItem.id;
+
+    if (activeItem.isLive) {
+      // Live mic recording — play the raw audio blob
       if (activeItem.audioData) {
-        // Play user's original recorded or uploaded audio default
         handlePlaySavedAudio(activeItem, true);
       } else {
-        // Fallback to active model prebuilt vocal setting
         speakActiveDigit(voiceSettings?.ttsVoice || "Aetheria");
       }
+    } else if (!activeItem.isLive && activeItem.audioData && !activeItem.id.startsWith("demo_")) {
+      // Upload — play the uploaded file
+      handlePlaySavedAudio(activeItem, true);
     }
-  }, [activeItem]);
+    // Demo items (id starts with "demo_") → silent, already spoken in DemoView
+  }, [activeItem?.id]); // depend only on the id, not voiceSettings
 
   const handleSelect = (item: DigitHistory) => {
     playClickSfx();
     setSelectedItem(item);
   };
 
-  // Calculate statistics
   const totalCount = history.length;
-  const confidenceAvg = totalCount > 0 
-    ? parseFloat((history.reduce((acc, curr) => acc + curr.confidence, 0) / totalCount * 100).toFixed(1))
-    : 0;
-  const liveCount = history.filter(h => h.isLive).length;
+  const confidenceAvg =
+    totalCount > 0
+      ? parseFloat(
+          (history.reduce((acc, curr) => acc + curr.confidence, 0) / totalCount * 100).toFixed(1)
+        )
+      : 0;
+  const liveCount = history.filter((h) => h.isLive).length;
   const uploadCount = totalCount - liveCount;
 
   return (
     <div className="flex-grow w-full max-w-6xl mx-auto px-6 pt-24 pb-12 relative z-10 flex flex-col gap-8 animate-fadeIn select-none">
-      
-      {/* OVERVIEW STATS GRID HEADER */}
+
+      {/* OVERVIEW STATS */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 w-full">
         <div className="bg-[#1f1f26]/30 border border-white/5 rounded-xl p-4 flex flex-col gap-1 text-left relative overflow-hidden">
           <span className="font-mono text-[9px] text-[#c7c4d8]/40 uppercase tracking-widest">Total Ingested</span>
@@ -116,26 +126,22 @@ export default function ResultsView({ history, onClearHistory, voiceSettings, ap
             <HardDrive className="w-5 h-5 text-[#c4c0ff]" />
             {totalCount} Vectors
           </span>
-          <div className="absolute top-0 right-0 w-8 h-8 bg-gradient-to-br from-[#c4c0ff]/5 to-transparent blur" />
         </div>
-
-        <div className="bg-[#1f1f26]/30 border border-white/5 rounded-xl p-4 flex flex-col gap-1 text-left relative overflow-hidden">
+        <div className="bg-[#1f1f26]/30 border border-white/5 rounded-xl p-4 flex flex-col gap-1 text-left">
           <span className="font-mono text-[9px] text-[#c7c4d8]/40 uppercase tracking-widest">Aura Accuracy index</span>
           <span className="font-sans text-2xl font-bold text-white flex items-center gap-2">
             <Cpu className="w-5 h-5 text-[#92dbff]" />
             {confidenceAvg}% Avg
           </span>
         </div>
-
-        <div className="bg-[#1f1f26]/30 border border-white/5 rounded-xl p-4 flex flex-col gap-1 text-left relative overflow-hidden">
+        <div className="bg-[#1f1f26]/30 border border-white/5 rounded-xl p-4 flex flex-col gap-1 text-left">
           <span className="font-mono text-[9px] text-[#c7c4d8]/40 uppercase tracking-widest">Live Transmissions</span>
           <span className="font-sans text-2xl font-bold text-white flex items-center gap-2">
             <Activity className="w-5 h-5 text-[#ff5352]" />
             {liveCount} Recs
           </span>
         </div>
-
-        <div className="bg-[#1f1f26]/30 border border-white/5 rounded-xl p-4 flex flex-col gap-1 text-left relative overflow-hidden">
+        <div className="bg-[#1f1f26]/30 border border-white/5 rounded-xl p-4 flex flex-col gap-1 text-left">
           <span className="font-mono text-[9px] text-[#c7c4d8]/40 uppercase tracking-widest">Upload Batches</span>
           <span className="font-sans text-2xl font-bold text-white flex items-center gap-2">
             <Sparkles className="w-5 h-5 text-[#8781ff]" />
@@ -145,33 +151,25 @@ export default function ResultsView({ history, onClearHistory, voiceSettings, ap
       </div>
 
       {totalCount === 0 ? (
-        /* NO RECORDS DEFAULT SCREEN */
         <div className="w-full bg-[#1f1f26]/20 border border-dashed border-[#464555]/30 rounded-2xl p-12 text-center flex flex-col items-center justify-center gap-4 py-20">
           <BarChart2 className="w-16 h-16 text-[#c7c4d8]/20 animate-pulse" />
           <div className="text-center">
-            <h2 className="font-sans text-lg font-semibold text-[#c7c4d8]/80 mb-1">
-              Spectroscopic Database Vacant
-            </h2>
+            <h2 className="font-sans text-lg font-semibold text-[#c7c4d8]/80 mb-1">Spectroscopic Database Vacant</h2>
             <p className="font-mono text-xs text-[#c7c4d8]/40 max-w-md mx-auto">
               No voice recordings detected. Trigger actual vocal packets via "Home" tab or dial elements on "Demo" grid to generate records.
             </p>
           </div>
         </div>
       ) : (
-        /* CORE RESULTS CANVAS - LEFT AREA CHATS RIGHT AREA CHRONOLOGY */
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          
-          {/* LEFT CHATS - DETAILED OUTCOME OF SELECTED RECEPTOR */}
+
+          {/* LEFT — DETAILED VIEW */}
           <div className="lg:col-span-2 flex flex-col gap-6">
             {activeItem && (
-              <div 
-                className="bg-[#1f1f26]/30 backdrop-blur-xl border border-white/5 rounded-2xl p-6 flex flex-col gap-6 shadow-[0_8px_32px_rgba(0,0,0,0.5)] animate-fadeIn relative overflow-hidden"
-              >
-                {/* Visual Corner target framing */}
+              <div className="bg-[#1f1f26]/30 backdrop-blur-xl border border-white/5 rounded-2xl p-6 flex flex-col gap-6 shadow-[0_8px_32px_rgba(0,0,0,0.5)] animate-fadeIn relative overflow-hidden">
                 <div className="absolute top-0 left-0 w-3 h-3 border-t border-l border-[#92dbff]/30 rounded-tl-xl" />
                 <div className="absolute top-0 right-0 w-3 h-3 border-t border-r border-[#92dbff]/30 rounded-tr-xl" />
 
-                {/* Subtitle brand stamp */}
                 <div className="flex justify-between items-center w-full font-mono text-[9px] text-[#c7c4d8]/30 uppercase tracking-widest">
                   <span className="flex items-center gap-1">
                     <ShieldCheck className="w-3.5 h-3.5 text-[#92dbff]" />
@@ -181,22 +179,18 @@ export default function ResultsView({ history, onClearHistory, voiceSettings, ap
                 </div>
 
                 <div className="flex flex-col md:flex-row items-center justify-around gap-6 py-4">
-                  {/* Big Glowing Output Key */}
                   <div className="flex flex-col items-center justify-center">
-                    <div 
+                    <div
                       className="w-32 h-32 rounded-full border bg-[#05050a] flex items-center justify-center animate-wave-float relative shadow-[0_0_40px_rgba(196,192,255,0.06)]"
-                      style={{ 
+                      style={{
                         borderColor: GREEK_ALPHABET[activeItem.digit]?.color || "#ffffff",
-                        boxShadow: `0 0 35px 5px ${GREEK_ALPHABET[activeItem.digit]?.hoverColor}` 
+                        boxShadow: `0 0 35px 5px ${GREEK_ALPHABET[activeItem.digit]?.hoverColor}`,
                       }}
                     >
-                      <span className="font-sans text-7xl font-bold text-white">
-                        {activeItem.digit}
-                      </span>
+                      <span className="font-sans text-7xl font-bold text-white">{activeItem.digit}</span>
                     </div>
                   </div>
 
-                  {/* Character Meta Descriptions */}
                   <div className="flex flex-col gap-3 text-center md:text-left">
                     <div>
                       <span className="font-mono text-[9px] text-secondary tracking-widest uppercase block mb-0.5">
@@ -206,7 +200,6 @@ export default function ResultsView({ history, onClearHistory, voiceSettings, ap
                         {getTranslatedPhonetic(activeItem.digit)}
                       </h2>
                     </div>
-
                     <div className="grid grid-cols-2 gap-x-6 gap-y-2 font-mono text-xs">
                       <div>
                         <span className="text-white/30 text-[10px] block uppercase">confidence</span>
@@ -231,7 +224,6 @@ export default function ResultsView({ history, onClearHistory, voiceSettings, ap
                   </div>
                 </div>
 
-                {/* AI Text explanation critique */}
                 <div className="bg-[#05050a]/40 border border-white/5 rounded-xl p-4 flex flex-col gap-1.5">
                   <div className="flex justify-between items-center font-mono text-[9px] text-[#c7c4d8]/40 tracking-wider">
                     <span>Acoustic Critiques / Spectrogram metrics</span>
@@ -241,15 +233,12 @@ export default function ResultsView({ history, onClearHistory, voiceSettings, ap
                       <span className="text-emerald-400 font-bold border border-emerald-400/25 px-1.5 py-0.5 rounded uppercase">REAL AI</span>
                     )}
                   </div>
-                  <p className="font-sans text-xs text-[#c7c4d8]/80 leading-relaxed text-left">
-                    {activeItem.analysis}
-                  </p>
+                  <p className="font-sans text-xs text-[#c7c4d8]/80 leading-relaxed text-left">{activeItem.analysis}</p>
                 </div>
 
-                {/* INTERACTIVE VOCAL PLAYBACK HUB */}
+                {/* VOCAL PLAYBACK HUB */}
                 <div className="border-t border-white/5 pt-5 flex flex-col gap-4 text-left">
-                  
-                  {/* Part 1: Default/Loaded Audio Broadcast */}
+
                   <div>
                     <span className="font-mono text-[9px] text-[#92dbff] uppercase tracking-widest block mb-1.5 font-bold">
                       1. Master Audio Broadcast (Default / Loaded)
@@ -263,12 +252,14 @@ export default function ResultsView({ history, onClearHistory, voiceSettings, ap
                         >
                           <span className="flex items-center gap-2">
                             <Clock className="w-4 h-4 text-[#92dbff]" />
-                            <span className="truncate max-w-[200px] sm:max-w-xs text-left">Play Original: {activeItem.filename}</span>
+                            <span className="truncate max-w-[200px] sm:max-w-xs text-left">
+                              Play Original: {activeItem.filename}
+                            </span>
                           </span>
                           <Play className={`w-3.5 h-3.5 ${playingId === activeItem.id ? "animate-spin text-[#92dbff]" : "fill-current"}`} />
                         </button>
                       ) : (
-                        <div className="flex-grow p-3 bg-white/5 border border-white/5 rounded-xl font-mono text-[10px] text-white/30 uppercase text-center select-none flex items-center justify-center">
+                        <div className="flex-grow p-3 bg-white/5 border border-white/5 rounded-xl font-mono text-[10px] text-white/30 uppercase text-center flex items-center justify-center">
                           Default simulated signal stimulus (No recorded file chunks)
                         </div>
                       )}
@@ -285,7 +276,6 @@ export default function ResultsView({ history, onClearHistory, voiceSettings, ap
                     </div>
                   </div>
 
-                  {/* Part 2: Cybernetic Multi-Voice Synthesis Grid */}
                   <div>
                     <span className="font-mono text-[9px] text-[#92dbff] uppercase tracking-widest block mb-1.5 font-bold">
                       2. Neural Multiverse - Interactive Voice Selection
@@ -328,24 +318,17 @@ export default function ResultsView({ history, onClearHistory, voiceSettings, ap
                       })}
                     </div>
                   </div>
-
                 </div>
-
               </div>
             )}
           </div>
 
-          {/* RIGHT COLUMN - MATRIX INGEST CHRONOLOGY */}
+          {/* RIGHT — CHRONOLOGY */}
           <div className="flex flex-col gap-4">
             <div className="flex justify-between items-center w-full">
-              <span className="font-mono text-[10px] text-white/40 tracking-widest uppercase">
-                Chronological Packets
-              </span>
+              <span className="font-mono text-[10px] text-white/40 tracking-widest uppercase">Chronological Packets</span>
               <button
-                onClick={() => {
-                  playClickSfx();
-                  onClearHistory();
-                }}
+                onClick={() => { playClickSfx(); onClearHistory(); }}
                 className="text-white/40 hover:text-[#ff5352] transition font-mono text-[9px] uppercase tracking-wider flex items-center gap-1 cursor-pointer"
               >
                 <Trash2 className="w-3.5 h-3.5" />
@@ -353,12 +336,10 @@ export default function ResultsView({ history, onClearHistory, voiceSettings, ap
               </button>
             </div>
 
-            {/* Scrolling chronological history items list */}
             <div className="flex flex-col gap-3 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
               {history.map((item) => {
                 const config = GREEK_ALPHABET[item.digit];
                 const isSelected = activeItem?.id === item.id;
-
                 return (
                   <div
                     key={item.id}
@@ -371,14 +352,12 @@ export default function ResultsView({ history, onClearHistory, voiceSettings, ap
                     }`}
                   >
                     <div className="flex items-center gap-3">
-                      {/* Miniature round identifier dial */}
-                      <div 
+                      <div
                         className="w-10 h-10 rounded-full border border-white/5 flex items-center justify-center font-bold text-white text-md select-none outline-none"
                         style={{ boxShadow: `0 0 10px ${config?.hoverColor || "transparent"}` }}
                       >
                         {item.digit}
                       </div>
-
                       <div className="flex flex-col">
                         <span className="font-sans text-xs font-semibold text-white uppercase leading-tight">
                           {getTranslatedPhonetic(item.digit)}
@@ -388,18 +367,13 @@ export default function ResultsView({ history, onClearHistory, voiceSettings, ap
                         </span>
                       </div>
                     </div>
-
-                    {/* Numeric percentage indicator */}
                     <div className="flex flex-col items-end gap-1.5">
                       <span className="font-mono text-[10px] text-[#92dbff] font-semibold leading-none">
                         {(item.confidence * 100).toFixed(0)}%
                       </span>
                       {item.audioData && (
                         <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handlePlaySavedAudio(item);
-                          }}
+                          onClick={(e) => { e.stopPropagation(); handlePlaySavedAudio(item); }}
                           className="p-1 text-white/30 hover:text-white transition cursor-pointer"
                         >
                           <Volume2 className="w-3.5 h-3.5" />
@@ -411,10 +385,8 @@ export default function ResultsView({ history, onClearHistory, voiceSettings, ap
               })}
             </div>
           </div>
-
         </div>
       )}
-
     </div>
   );
 }
