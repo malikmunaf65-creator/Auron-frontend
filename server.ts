@@ -2,7 +2,6 @@ import express from "express";
 import path from "path";
 import dotenv from "dotenv";
 import fs from "fs";
-import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Modality } from "@google/genai";
 
 dotenv.config();
@@ -13,7 +12,10 @@ const PORT = Number(process.env.PORT) || 3000;
 app.use(express.json({ limit: "20mb" }));
 app.use(express.urlencoded({ limit: "20mb", extended: true }));
 
-const DB_FILE_PATH = path.join(process.cwd(), "agents_db.json");
+// On Vercel the filesystem is read-only except /tmp, so use /tmp there.
+const DB_FILE_PATH = process.env.VERCEL
+  ? "/tmp/agents_db.json"
+  : path.join(process.cwd(), "agents_db.json");
 
 interface AgentRecord {
   username: string;
@@ -241,7 +243,7 @@ app.post("/api/recognize", async (req, res) => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ audio, mimeType }),
-        signal: AbortSignal.timeout(110000),
+        signal: AbortSignal.timeout(60000),
       });
       if (pythonRes.ok) {
         const data = await pythonRes.json();
@@ -349,7 +351,6 @@ app.get("/api/sample/:digit", async (req, res) => {
       throw new Error(`Python backend returned ${response.status}`);
     }
     const html = await response.text();
-    // Extract JSON prediction data from the HTML response
     const digitMatch = html.match(/digit-number[^>]*>(\d)</);
     const digit = digitMatch ? parseInt(digitMatch[1]) : parseInt(req.params.digit);
     return res.json({
@@ -421,30 +422,13 @@ app.post("/api/tts", async (req, res) => {
 });
 
 // ----------------------------------------------------
-// VITE AND STATIC SERVING
+// LOCAL / RAILWAY: listen on a port (Vercel ignores this — it uses the
+// exported `app` directly as a serverless request handler)
 // ----------------------------------------------------
-async function setupVite() {
-  if (process.env.NODE_ENV !== "production") {
-    console.log("Dev mode with Vite middleware...");
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  } else {
-    console.log("Serving static production assets from /dist...");
-    const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
-    });
-  }
-
+if (!process.env.VERCEL) {
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Auron Engine online at http://0.0.0.0:${PORT}`);
   });
 }
 
-setupVite().catch((err) => {
-  console.error("Fatal: failed to bootstrap Auron Service:", err);
-});
+export default app;
